@@ -1,93 +1,125 @@
 package com.iuh_19475611_lethanhphong_ad_todoapp
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import android.view.View
-import android.widget.EditText
-import android.widget.ListView
-import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
-import com.google.android.material.floatingactionbutton.FloatingActionButton
-import com.google.firebase.database.*
+import android.util.Log
+import android.widget.*
+import androidx.fragment.app.DialogFragment
+import androidx.recyclerview.widget.DividerItemDecoration
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.firebase.database.DatabaseReference
+import com.google.firebase.database.ktx.database
+import com.google.firebase.ktx.Firebase
+import com.iuh_19475611_lethanhphong_ad_todoapp.databinding.ActivityMainBinding
+import com.iuh_19475611_lethanhphong_ad_todoapp.model.TaskItemModel
+import com.iuh_19475611_lethanhphong_ad_todoapp.model.TaskModel
+import java.text.SimpleDateFormat
+import java.util.logging.SimpleFormatter
+import kotlin.collections.ArrayList
 
-class MainActivity : AppCompatActivity() , UpdateAndDelete {
-    lateinit var  database : DatabaseReference
-    var todoList : MutableList<ToDoModel>? = null
-    lateinit var adapter : ToDoAdapter
-    private var listViewItem : ListView? = null
+class MainActivity : AppCompatActivity(), DialogAddItem.DialogAddItemListener {
+
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var database: DatabaseReference
+    private var layoutManager: RecyclerView.LayoutManager? = null
+    private var adapter: RecyclerView.Adapter<TaskAdapter.ViewHolder>? = null
+    private val firebaseTag = "FirebaseTag"
+    private lateinit var dataset: MutableList<TaskModel>
+    private val sdf = SimpleDateFormat("dd/MM/yyyy - HH:mm")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        database = Firebase.database.reference
 
-        val fab = findViewById<View>(R.id.fab) as FloatingActionButton
-        listViewItem = findViewById<ListView>(R.id.item_listView)
+        setContentView(binding.root)
 
-        database = FirebaseDatabase.getInstance().reference
+        layoutManager = LinearLayoutManager(this)
 
-        fab.setOnClickListener{view ->
-            val alertDialog = AlertDialog.Builder(this)
-            val textEditText = EditText(this)
-            alertDialog.setTitle("Add New Task")
-            alertDialog.setView(textEditText)
-            alertDialog.setPositiveButton("Add"){ dialog, i ->
-                val todoItemData = ToDoModel.createList()
-                todoItemData.itemDataText = textEditText.text.toString()
-                todoItemData.done = false
+        binding.recyclerView.layoutManager = layoutManager
 
-                val newItemData = database.child("todo").push()
-                todoItemData.UID = newItemData.key
+        createAdapter()
 
-                newItemData.setValue(todoItemData)
-                dialog.dismiss()
-                Toast.makeText(this, "item saved" , Toast.LENGTH_LONG).show()
+        binding.buttonAddItem.setOnClickListener { showDialog() }
+    }
+
+    private fun createAdapter() {
+        database.child("task").get()
+            .addOnSuccessListener {
+                dataset = it.children.map { el ->
+                    TaskModel(
+                        el.key.toString(),
+                        el.getValue(TaskItemModel::class.java)
+                    )
+                } as ArrayList<TaskModel>
+
+                // initialize adapter
+                adapter = TaskAdapter(binding, database, this, dataset)
+                binding.recyclerView.adapter = adapter
+
+                // add divider
+                val decorator = DividerItemDecoration(binding.recyclerView.context, LinearLayoutManager.VERTICAL)
+                binding.recyclerView.addItemDecoration(decorator)
+
+            }.addOnFailureListener {
+                Log.e(firebaseTag, "Fail to get task", it)
             }
-            alertDialog.show()
+    }
+
+    fun showDialog(isEdit: Boolean = false, currentItem: TaskModel? = null, currentItemPosition: Int? = null) {
+        val dialogAddItem = DialogAddItem(binding, isEdit, currentItem, currentItemPosition)
+        dialogAddItem.show(this.supportFragmentManager, "additemtag")
+    }
+
+    override fun onDialogPositiveClick(dialog: DialogFragment, isEdit: Boolean, currentItem: TaskModel?, currentItemPosition: Int?) {
+        val taskDesc: EditText = dialog.dialog!!.findViewById(R.id.edit_text_task_desc)
+
+        val textViewDateTime: TextView = dialog.dialog!!.findViewById(R.id.text_view_datetime)
+        val dateTimeFormatted = sdf.parse(textViewDateTime.text.toString())
+
+        val uniqueID = when(isEdit) {
+            false -> "${dateTimeFormatted.time}${System.currentTimeMillis()}" // parsed date + current date for automatic sort
+            else -> currentItem?.id
         }
-
-
-        todoList = mutableListOf<ToDoModel>()
-        adapter = ToDoAdapter(this, todoList!!)
-        listViewItem!!.adapter = adapter
-        database.addValueEventListener(object : ValueEventListener{
-            override fun onCancelled(error: DatabaseError) {
-                Toast.makeText(applicationContext , "No item Added" , Toast.LENGTH_LONG).show()
-            }
-
-            override fun onDataChange(snapshot: DataSnapshot) {
-                todoList!!.clear()
-                addItemToList(snapshot)
-            }
-        })
-
-    }
-
-    private fun addItemToList(snapshot: DataSnapshot) {
-        val items = snapshot.children.iterator()
-        if(items.hasNext()){
-            val todoIndexdvalue = items.next()
-            val itemsIterator = todoIndexdvalue.children.iterator()
-            while(itemsIterator.hasNext()){
-                val currentItem = itemsIterator.next()
-                val todoItemData = ToDoModel.createList()
-                val map = currentItem.getValue() as HashMap<String , Any>
-                todoItemData.UID = currentItem.key
-                todoItemData.done = map.get("done") as Boolean?
-                todoItemData.itemDataText = map.get("itemDataText") as String?
-                todoList!!.add(todoItemData)
-            }
+        val data = TaskItemModel(
+            taskDesc.text.toString(),
+            false,
+            textViewDateTime.text.toString()
+        )
+        if (currentItemPosition != null) {
+            data.status = dataset[currentItemPosition].data?.status
         }
-        adapter.notifyDataSetChanged()
+        if (uniqueID != null) {
+            database
+                .child("task")
+                .child(uniqueID)
+                .setValue(data)
+                .addOnSuccessListener {
+                    // update adapter
+                    val item = TaskModel(uniqueID, data)
+
+                    if (isEdit) {
+                        dataset[currentItemPosition!!] = item
+                        adapter?.notifyItemChanged(currentItemPosition)
+                    } else {
+                        dataset.add(item)
+                        adapter?.notifyItemInserted(dataset.size - 1)
+                    }
+                }.addOnFailureListener {
+                    Toast.makeText(
+                        baseContext,
+                        "Fail to set value",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+        }
     }
 
-    override fun modifyItem(itemUID: String, isDone: Boolean) {
-        val itemReference = database.child("todo").child(itemUID)
-        itemReference.child("done").setValue(isDone)
+    override fun onDialogNegativeClick(dialog: DialogFragment, isEdit: Boolean, currentItem: TaskModel?, currentItemPosition: Int?) {
+
     }
 
-    override fun onItemDelete(itemUID: String) {
-        val itemReference = database.child("todo").child(itemUID)
-        itemReference.removeValue()
-        adapter.notifyDataSetChanged()
-    }
 }
