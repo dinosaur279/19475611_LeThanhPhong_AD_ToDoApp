@@ -1,2 +1,3 @@
-# 19475611_LeThanhPhong_AD_ToDoApp
-Bài tập thực hành môn phát triển ứng dụng
+# Bài tập thực hành môn phát triển ứng dụng
+Họ và tên : Lê Thanh Phong 
+MSSV: 19475611
